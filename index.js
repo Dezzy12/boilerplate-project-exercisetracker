@@ -4,7 +4,7 @@ const cors = require('cors')
 const mongoose = require('mongoose');
 const mongodb = require('mongodb');
 const bodyParser = require('body-parser');
-require('dotenv').config()
+require('dotenv').config();
 
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
@@ -28,11 +28,11 @@ app.get('/', (req, res) => {
 });
 
 // User schema
-const userSchema = new mongoose.Schema({
+const UserSchema = new mongoose.Schema({
   username: String,
 });
 
-const User = mongoose.model('User',userSchema);
+const User = mongoose.model('User',UserSchema);
 
 // Exercise schema
 const exerciseSchema = new mongoose.Schema({
@@ -64,6 +64,33 @@ app.post('/api/users', async (req, res) => {
   }  
 });
 
+// Get all users
+app.get('/api/users', async (req, res) => {
+  try{
+    const users = await User.find({});
+    if(users.length == 0){
+      return res.status(404).json({ error: 'No users found' });
+    }
+    res.status(200).json(users);
+  } catch (err) {
+    console.log(err);
+    res.status(500).json({ error: 'Sever error...' });
+  }
+  
+});
+
+// Delete all users
+app.get('/api/users/delete', async (req, res) => {
+  try{
+    await User.deleteMany({});
+    await Exercise.deleteMany({});
+    res.status(200).json({ message: 'Successfully deleted' });
+  } catch (err) {
+    console.log(err);
+    res.status(500).json({ error: 'Sever error...' });
+  }
+});
+
 // Add exercise for a user
 app.post('/api/users/:_id/exercises', async (req, res) => {
   try{
@@ -76,18 +103,20 @@ app.post('/api/users/:_id/exercises', async (req, res) => {
     }
 
     const newExercise = new Exercise({ 
-      userId: userId, 
+      userId: userExist._id, 
+      username: userExist.username,
       description: description,
-      duration: duration, 
+      duration: parseInt(duration), 
       date: date ? new Date(date) : new Date(),
     });
+
     const data = await newExercise.save();
     res.status(201).json({ 
-      username: data.username, 
+      username: userExist.username, 
       description: data.description,
       duration: data.duration, 
+      date: new Date(data.date).toDateString(),
       _id: data.userId, 
-      date: data.date.toDateString() 
     });
 
   } catch (err) {
@@ -97,23 +126,51 @@ app.post('/api/users/:_id/exercises', async (req, res) => {
 });
 
 // Get exercise logs
-app.get('/api/users/:_id/logs', async (req, res) => {
+app.get("/api/users/:_id/logs", async (req, res) => {
   try{
     const userId = req.params._id;
-    const from = req.query.from ? new Date(req.query.from) : new Date(0);
-    const to = req.query.to ? new Date(req.query.to) : new Date();
-    const limit = req.query.limit ? parseInt(req.query.limit) : 0;
+    const from = req.query.from || new Date(0);
+    const to = req.query.to || new Date(Date.now());
+    const limit = Number(req.query.limit) || 0;
 
-    const userExist = await User.findOne({ _id: userId});
-    if (!userExist) {
-      return res.status(404).json({ error: 'User not found' });
+    const user =await User.findById(userId);
+    if (!user) {
+      res.status(404).json({ error: 'User not found' })
+      return;
+    }
+    let parsedDatesLog = {}
+
+    if (from){
+      parsedDatesLog["$gte"] = new Date(from)
+    }
+    if (to){
+      parsedDatesLog["$lte"] = new Date(to)
     }
 
-    const exercises = await Exercise.find({ userId: userId, date: { $gte: from, $lte: to } }).limit(limit);
-    const count = await Exercise.countDocuments({ userId: userId, date: { $gte: from, $lte: to } });
+    let filter = { userId: userId }
+    if(from || to){
+      filter.date = parsedDatesLog;
+    }
+    let exercises = await Exercise.find(filter).select("-_id -userId -_v");
+    if (limit > 0) {
+      exercises = exercises.slice(0, limit);
+    }
 
-    res.status(200).json({username: userExist.username, _id: userExist._id, count: count, log: exercises});
+    const log = exercises.map((exercise) => ({
+      description: exercise.description,
+      duration: exercise.duration,
+      date: exercise.date.toDateString(),
+    }));
+    
+    res.status(200).json({
+      username: user.username, 
+      count: exercises.length, 
+      _id: user._id, 
+      log
+    });
+    console.log(from, to, limit);
   } catch (err) {
+    console.log(err);
     res.status(500).json({ error: 'Sever error...' });
   }  
 });
